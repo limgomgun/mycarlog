@@ -277,6 +277,7 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; text-wrap: 
 .cg-etc .ico { color: var(--g-etc); }
 .catname { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .top > .hero-ico { position: absolute; top: 52px; right: 28px; width: 84px; height: 84px; z-index: 0; color: rgba(255, 255, 255, 0.22); }
+.top > .hero-ico[hidden] { display: none; }
 @media (max-width: 640px) { .top > .hero-ico { display: none; } }
 .memo { overflow-wrap: anywhere; }
 .rdet { margin-top: 2px; font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 10px; }
@@ -1073,11 +1074,11 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
       if (img.src !== S.car.photo) img.src = S.car.photo;
       img.alt = '';
       img.hidden = false;
-      $('heroCar').hidden = true;
+      $('heroCar').style.display = 'none';
     } else {
       img.removeAttribute('src');
       img.hidden = true;
-      $('heroCar').hidden = false;
+      $('heroCar').style.display = '';
     }
     var max = 0;
     list.forEach(function (e) { if (e.odo != null && e.odo > max) max = e.odo; });
