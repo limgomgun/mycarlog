@@ -507,6 +507,25 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
 }
 @media (prefers-reduced-transparency: reduce) { .dd-pop { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @media (max-width: 520px) { .top > .toptools { position: static; max-width: none; justify-content: flex-start; margin: 0 0 14px; } }
+
+/* certificate import */
+.imp-drop { border: 1.5px dashed var(--line); border-radius: 16px; padding: 14px; transition: border-color .15s, background .15s; }
+.imp-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.imp-state { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+.imp-bar { height: 6px; border-radius: 99px; background: var(--surface2); overflow: hidden; margin-top: 8px; }
+.imp-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.imp-rec { border-top: 1px solid var(--line); padding: 12px 0; display: grid; gap: 8px; }
+.imp-rec:first-child { border-top: 0; }
+.imp-rec.dup { opacity: .6; }
+.imp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.imp-head .chk { font-weight: 600; }
+.imp-head .dd, .imp-head input[type=number] { width: 150px; }
+.imp-tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+.imp-raw { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.imp-sum { margin: 6px 0 0; font-size: 14px; }
+details.imp-paste { margin-top: 10px; }
+details.imp-paste summary { cursor: pointer; font-size: 14px; color: var(--muted); }
+details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; font: inherit; border-radius: 12px; border: 1px solid var(--line); background: var(--glass-in, var(--surface)); color: var(--ink); padding: 10px; }
 </style>
 </head>
 <body>
@@ -600,6 +619,23 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
           </div>
         </div>
         <div id="items"></div>
+      </section>
+
+      <section class="card card-pad" aria-labelledby="h-imp">
+        <div class="card-head">
+          <h2 id="h-imp">정비 이력 가져오기</h2>
+          <div class="listtools"><button class="btn small" id="impPick" type="button">사진 선택</button></div>
+        </div>
+        <div class="imp-drop" id="impDrop">
+          <p class="hint" style="margin:0">자동차 기록 증명서(마일클 등) 화면을 캡처해 올리면 날짜·주행거리·교체 항목을 읽어서 기록으로 가져와요. 사진은 이 기기 안에서만 처리돼요. 이미지를 끌어다 놓거나 붙여넣어도 돼요.</p>
+          <input id="impFile" type="file" accept="image/*" hidden>
+          <div id="impBox" hidden></div>
+        </div>
+        <details class="imp-paste">
+          <summary>사진이 안 읽히면 글자를 직접 붙여넣기</summary>
+          <textarea id="impText" placeholder="2026.09&#10;125,256km&#10;엔진오일 및 오일필터 · 냉각수 …" aria-label="증명서 글자 붙여넣기"></textarea>
+          <div class="actions"><button class="btn small" id="impParse" type="button">분석</button></div>
+        </details>
       </section>
 
       <section class="card card-pad" aria-labelledby="h-chart">
@@ -1729,6 +1765,191 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
     });
   }
 
+
+  /* ---------- import from a car-record certificate ---------- */
+  var OCR = window.__OCR || {
+    script: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+    lang: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/kor/4.0.0_best_int'
+  };
+  var KEYMAP = [
+    ['엔진오일', /엔진오일|오일필터/],
+    ['미션오일', /미션오일|변속기오일|ATF/i],
+    ['브레이크오일', /브레이크오일|브레이크액/],
+    ['냉각수', /냉각수|부동액/],
+    ['에어컨 필터', /에어컨필터|항균필터|캐빈필터/],
+    ['와이퍼', /와이퍼/],
+    ['타이어', /타이어/],
+    ['브레이크 패드', /브레이크패드|라이닝/],
+    ['배터리', /배터리/]
+  ];
+  var impRecs = [];
+  function detectItems(text) {
+    var t = text.replace(/\s+/g, ''), out = [];
+    KEYMAP.forEach(function (k) { if (k[1].test(t)) out.push(k[0]); });
+    return out;
+  }
+  function parseCert(text) {
+    var recs = [], cur = null, now = new Date();
+    String(text || '').split(/\r?\n/).forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) return;
+      var head = line.replace(/^[^0-9가-힣]+/, '').match(/^(?:\d\s+)?(20\d\d)\s*[.\-]\s*(\d{1,2})(?:\s*[.\-]\s*(\d{1,2}))?$/);
+      if (head && +head[2] >= 1 && +head[2] <= 12) {
+        cur = { y: +head[1], m: +head[2], d: head[3] ? +head[3] : null, odo: null, parts: [] };
+        recs.push(cur);
+        return;
+      }
+      if (!cur) return;
+      if (/기록\s*증명서를\s*저장|증명서를\s*저장/.test(line)) { cur = null; return; }
+      if (cur.odo == null) {
+        var n = line.match(/(\d{1,3}(?:,\d{3})+|\d{5,7})/);
+        if (n) { cur.odo = parseInt(n[1].replace(/,/g, ''), 10); return; }
+      }
+      cur.parts.push(line);
+    });
+    var today = todayStr();
+    return recs.filter(function (r) { return r.odo != null; }).map(function (r) {
+      var ym = r.y + '-' + pad(r.m), day = r.d;
+      if (!day) day = (ym === today.slice(0, 7)) ? +today.slice(8, 10) : 1;
+      var text2 = r.parts.join(', ').replace(/\s*[_、|·]\s*/g, ', ').replace(/\s{2,}/g, ' ').replace(/^[,\s]+|[,\s]+$/g, '');
+      if (/^주행$/.test(text2.replace(/\s+/g, ''))) text2 = '';
+      var det = detectItems(text2);
+      return { date: ym + '-' + pad(day), odo: r.odo, memo: text2, items: det, cat: text2 ? 'maint' : 'etc', on: true, dup: false };
+    });
+  }
+  function loadOcr() {
+    return new Promise(function (res, rej) {
+      if (window.Tesseract) return res(window.Tesseract);
+      var sc = document.createElement('script');
+      sc.src = OCR.script;
+      sc.onload = function () { window.Tesseract ? res(window.Tesseract) : rej(new Error('ocr')); };
+      sc.onerror = function () { rej(new Error('ocr')); };
+      document.head.appendChild(sc);
+    });
+  }
+  function ocrImage(file, onProg) {
+    return loadOcr().then(function (T) {
+      var o = { langPath: OCR.lang, logger: function (m) { if (m && m.status === 'recognizing text') onProg(m.progress || 0); } };
+      if (OCR.workerPath) o.workerPath = OCR.workerPath;
+      if (OCR.corePath) o.corePath = OCR.corePath;
+      return T.createWorker('kor', 1, o);
+    }).then(function (w) {
+      return w.recognize(file).then(function (r) { return w.terminate().then(function () { return r.data.text; }); },
+        function (e) { return w.terminate().then(function () { throw e; }); });
+    });
+  }
+  function impMsg(text, bar) {
+    var box = $('impBox');
+    box.hidden = false;
+    box.textContent = '';
+    box.append(h('p', { class: 'imp-state', text: text }));
+    if (bar) box.append(h('div', { class: 'imp-bar' }, h('i', { id: 'impBarI' })));
+  }
+  function impProg(p) { var el = $('impBarI'); if (el) el.style.width = Math.round(p * 100) + '%'; }
+  function showImp(recs, rawText) {
+    var known = {};
+    S.entries.forEach(function (e) { if (e.odo != null) known[e.odo] = true; });
+    recs.forEach(function (r) { r.dup = !!known[r.odo]; r.on = !r.dup; });
+    impRecs = recs;
+    var box = $('impBox');
+    box.hidden = false;
+    box.textContent = '';
+    if (!recs.length) {
+      box.append(h('p', { class: 'imp-state', text: '날짜와 주행거리를 찾지 못했어요. 증명서의 "상세 이력" 부분이 보이도록 캡처했는지 확인하거나, 아래에 글자를 직접 붙여넣어 보세요.' }));
+      return;
+    }
+    box.append(h('p', { class: 'imp-sum', text: recs.length + '건을 찾았어요. 가져올 기록을 확인하고 필요하면 고쳐 주세요.' }));
+    recs.forEach(function (r, idx) {
+      var cb = h('input', { type: 'checkbox', checked: r.on ? true : null, onchange: function () { r.on = cb.checked; upd(); } });
+      var dateI = h('input', { type: 'date', value: r.date, 'aria-label': '날짜', onchange: function () { r.date = dateI.value; } });
+      var odoI = h('input', { type: 'number', inputmode: 'numeric', min: '0', value: String(r.odo), 'aria-label': '주행거리 (km)', onchange: function () { r.odo = parseInt(odoI.value, 10) || 0; } });
+      var head = h('div', { class: 'imp-head' }, h('label', { class: 'chk' }, cb, h('span', { text: '가져오기' })), dateI, odoI, h('span', { text: 'km' }));
+      if (r.dup) head.append(h('span', { class: 'imp-tag', text: '같은 주행거리 기록이 이미 있어요' }));
+      var chips = h('div', { class: 'checks tog' });
+      KEYMAP.forEach(function (k) {
+        var ci = h('input', { type: 'checkbox', checked: r.items.indexOf(k[0]) >= 0 ? true : null, onchange: function () {
+          var p = r.items.indexOf(k[0]);
+          if (ci.checked && p < 0) r.items.push(k[0]);
+          if (!ci.checked && p >= 0) r.items.splice(p, 1);
+        } });
+        chips.append(h('label', { class: 'tchip' }, ci, h('span', { text: k[0] })));
+      });
+      var memoI = h('input', { type: 'text', maxlength: '120', value: r.memo ? '[증명서] ' + r.memo : '[증명서] 주행거리 기록', 'aria-label': '메모', onchange: function () { r.memoOut = memoI.value; } });
+      r.memoOut = memoI.value;
+      r.dateEl = dateI; r.odoEl = odoI; r.memoEl = memoI;
+      var row = h('div', { class: 'imp-rec' + (r.dup ? ' dup' : '') }, head, chips, memoI);
+      box.append(row);
+      enhanceDate(dateI);
+    });
+    var addB = h('button', { class: 'btn primary', type: 'button', id: 'impGo' });
+    var cancelB = h('button', { class: 'btn', type: 'button', text: '닫기', onclick: function () { box.hidden = true; box.textContent = ''; impRecs = []; } });
+    box.append(h('div', { class: 'actions' }, addB, cancelB));
+    function upd() { var n = recs.filter(function (r) { return r.on; }).length; addB.textContent = n + '건 가져오기'; addB.disabled = n === 0; }
+    addB.addEventListener('click', function () { commitImport(); });
+    upd();
+  }
+  function commitImport() {
+    var sel = impRecs.filter(function (r) { return r.on; });
+    if (!sel.length) return;
+    sel.forEach(function (r) {
+      if (r.dateEl && r.dateEl.value) r.date = r.dateEl.value;
+      if (r.odoEl) r.odo = parseInt(r.odoEl.value, 10) || r.odo;
+      if (r.memoEl) r.memoOut = r.memoEl.value;
+    });
+    var list = S.items.slice(), created = 0, norm = function (x) { return String(x).replace(/\s+/g, ''); };
+    function idFor(name) {
+      var f = list.find(function (it) { return norm(it.name) === norm(name); });
+      if (!f) {
+        var p = PRESETS.find(function (x) { return norm(x.name) === norm(name); }) || { name: name, km: null, months: null };
+        f = { id: 'i_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: p.name, km: p.km || null, months: p.months || null };
+        list.push(f); created++;
+      }
+      return f.id;
+    }
+    var ents = sel.map(function (r) {
+      var ids = r.cat === 'maint' ? r.items.map(idFor) : [];
+      return {
+        id: 'e_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        date: r.date, cat: r.cat, amount: 0, odo: r.odo > 0 ? r.odo : null,
+        qty: null, price: null, full: false, station: '', items: ids,
+        memo: (r.memoOut || '').trim().slice(0, 120), ts: Date.now()
+      };
+    });
+    $('impGo').disabled = true;
+    var p = enqueue(function () { return created ? putItems(list) : Promise.resolve(); });
+    ents.forEach(function (e) { p = p.then(function (ok) { return enqueue(function () { return putEntry(e); }); }); });
+    p.then(function () {
+      toast(ents.length + '건을 가져왔어요' + (created ? ' · 소모품 ' + created + '개 추가' : ''));
+      $('impBox').hidden = true; $('impBox').textContent = ''; impRecs = [];
+      S.listMonth = 'all';
+      render();
+    });
+  }
+  function importFile(file) {
+    if (!file || !/^image\//.test(file.type)) { toast('이미지 파일을 선택해 주세요'); return; }
+    impMsg('글자를 읽는 중이에요… 처음에는 읽기 도구를 내려받느라 조금 걸려요.', true);
+    ocrImage(file, impProg).then(function (text) {
+      showImp(parseCert(text), text);
+    }, function () {
+      impMsg('사진을 읽지 못했어요. 인터넷 연결을 확인하거나, 아래에 글자를 직접 붙여넣어 보세요.', false);
+    });
+  }
+  function initImport() {
+    var drop = $('impDrop');
+    $('impPick').addEventListener('click', function () { $('impFile').click(); });
+    $('impFile').addEventListener('change', function () { var f = $('impFile').files[0]; $('impFile').value = ''; importFile(f); });
+    ['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (ev) { ev.preventDefault(); drop.classList.add('over'); }); });
+    ['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function (ev) { ev.preventDefault(); drop.classList.remove('over'); }); });
+    drop.addEventListener('drop', function (ev) { importFile(ev.dataTransfer && ev.dataTransfer.files[0]); });
+    document.addEventListener('paste', function (ev) {
+      var t = ev.target && ev.target.tagName;
+      if (t === 'INPUT' || t === 'TEXTAREA') return;
+      var fs = ev.clipboardData && ev.clipboardData.files;
+      if (fs && fs[0] && /^image\//.test(fs[0].type)) { ev.preventDefault(); importFile(fs[0]); }
+    });
+    $('impParse').addEventListener('click', function () { showImp(parseCert($('impText').value), $('impText').value); });
+  }
+
   /* ---------- toast ---------- */
   var toastTimer = 0;
   function toast(msg) {
@@ -2044,6 +2265,7 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
       if (i > 0) gotoMonth(monthList[i - 1]);
     });
     $('demoOff').addEventListener('click', function () { S.demoOff = true; render(); });
+    initImport();
 
     var chartBox = $('chartBox');
     chartBox.addEventListener('click', function (ev) {
