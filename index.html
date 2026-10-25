@@ -1,5 +1,9 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>차계부</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
 <style>
 /* Layout: odometer header, then stats + history on the left, a sticky entry form on the right (stacked, form folded, on phones). */
@@ -491,8 +495,10 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
   @keyframes ddin { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
 }
 @media (prefers-reduced-transparency: reduce) { .dd-pop { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+@media (max-width: 520px) { .top > .toptools { position: static; max-width: none; justify-content: flex-start; margin: 0 0 14px; } }
 </style>
-
+</head>
+<body>
 <div class="wrap">
   <header class="top">
     <img id="carImg" class="hero-img" alt="" hidden>
@@ -2135,3 +2141,5 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
   init();
 })();
 </script>
+</body>
+</html>
