@@ -632,10 +632,10 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
       <section class="card card-pad" aria-labelledby="h-imp">
         <div class="card-head">
           <h2 id="h-imp">정비 이력 가져오기</h2>
-          <div class="listtools"><button class="btn small" id="xlPick" type="button">엑셀·CSV</button><button class="btn small" id="impPick" type="button">사진 선택</button></div>
+          <div class="listtools"><button class="btn small" id="xlTpl" type="button">양식 받기</button><button class="btn small" id="xlPick" type="button">엑셀·CSV</button><button class="btn small" id="impPick" type="button">사진 선택</button></div>
         </div>
         <div class="imp-drop" id="impDrop">
-          <p class="hint" style="margin:0">자동차 기록 증명서(마일클 등) 화면을 캡처해 올리면 날짜·주행거리·교체 항목을 읽어서 기록으로 가져와요. 사진은 이 기기 안에서만 처리돼요. 이미지를 끌어다 놓거나 붙여넣어도 돼요. 엑셀로 관리하던 기록은 오른쪽 위 <b>엑셀·CSV</b> 버튼으로 가져와요. 이 앱에서 내보낸 CSV는 그대로 읽혀요.</p>
+          <p class="hint" style="margin:0">자동차 기록 증명서(마일클 등) 화면을 캡처해 올리면 날짜·주행거리·교체 항목을 읽어서 기록으로 가져와요. 사진은 이 기기 안에서만 처리돼요. 이미지를 끌어다 놓거나 붙여넣어도 돼요. 엑셀로 관리하던 기록은 오른쪽 위 <b>엑셀·CSV</b> 버튼으로 가져와요. 이 앱에서 내보낸 CSV는 그대로 읽혀요. <b>양식 받기</b>로 빈 양식을 받아 채워서 올려도 돼요. 분류는 주유·충전, 정비·부품, 세차, 보험, 세금·검사, 주차·통행료, 기타 중에서 쓰면 정확해요.</p>
           <input id="impFile" type="file" accept="image/*" hidden>
           <div id="impBox" hidden></div>
         </div>
@@ -1761,18 +1761,42 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     });
     return '﻿' + lines.join('\r\n');
   }
-  function exportCSV() {
-    var text = toCSV(), name = '차계부-' + todayStr().replace(/-/g, '') + '.csv';
-    var fallback = function () {
+  function saveText(name, text, okMsg) {
+    var viaLink = function () {
+      try {
+        var url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+        var a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+        toast(okMsg);
+        return Promise.resolve();
+      } catch (e) { return clip(); }
+    };
+    var clip = function () {
       var p;
       try { p = navigator.clipboard.writeText(text); } catch (e) { p = Promise.reject(e); }
-      return p.then(function () { toast('CSV를 클립보드에 복사했어요'); }, function () { toast('내보내지 못했어요'); });
+      return p.then(function () { toast('파일을 만들지 못해 내용을 클립보드에 복사했어요'); }, function () { toast('내보내지 못했어요'); });
     };
-    if (!dlNS) return fallback();
-    return dlNS.save({ filename: name, data: text }).then(function () { toast('CSV를 내보냈어요'); }, function (e) {
+    if (!dlNS) return viaLink();
+    return dlNS.save({ filename: name, data: text }).then(function () { toast(okMsg); }, function (e) {
       if (e && e.code === 'declined') return;
-      return fallback();
+      return viaLink();
     });
+  }
+  function exportCSV() {
+    return saveText('chagyebu-' + todayStr().replace(/-/g, '') + '.csv', toCSV(), 'CSV를 내보냈어요');
+  }
+  function downloadTemplate() {
+    var q = function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+    var rows = [
+      ['날짜', '분류', '주유소', '수량(L)', '단가(원)', '금액(원)', '주행거리(km)', '가득 여부', '교체 소모품', '메모'],
+      ['2026-01-05', '주유·충전', 'GS칼텍스 영통점', 40.2, 1650, 66330, 125700, '예', '', '예시 줄이에요. 지우고 입력하세요'],
+      ['2026-01-12', '정비·부품', '', '', '', 89000, 125900, '', '엔진오일, 에어컨 필터', '예시 줄이에요. 지우고 입력하세요'],
+      ['2026-01-20', '세차', '', '', '', 8000, '', '', '', '예시 줄이에요. 지우고 입력하세요']
+    ];
+    var text = '\ufeff' + rows.map(function (r) { return r.map(q).join(','); }).join('\r\n');
+    return saveText('chagyebu-template.csv', text, '양식을 내려받았어요');
   }
 
 
@@ -1957,6 +1981,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
       var fs = ev.clipboardData && ev.clipboardData.files;
       if (fs && fs[0] && /^image\//.test(fs[0].type)) { ev.preventDefault(); importFile(fs[0]); }
     });
+    $('xlTpl').addEventListener('click', downloadTemplate);
     $('xlPick').addEventListener('click', function () { $('xlFile').click(); });
     $('xlFile').addEventListener('change', function () { var f = $('xlFile').files[0]; $('xlFile').value = ''; importSheet(f); });
     $('impParse').addEventListener('click', function () { showImp(parseCert($('impText').value), $('impText').value); });
