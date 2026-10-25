@@ -1,5 +1,7 @@
 # mycarlog (차계부)
 
+**바로 접속: https://seungjaelim0810-ui.github.io/mycarlog/**
+
 주유·정비·세차·보험 등 차량 비용과 연비, 소모품 교체 주기를 관리하는 단일 HTML 웹앱입니다.
 기록은 사용하는 브라우저(localStorage)에만 저장되며, 하단의 CSV 내보내기로 백업할 수 있어요.
 
