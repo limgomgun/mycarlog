@@ -526,6 +526,14 @@ input:focus-visible, select:focus-visible { background: var(--glass-strong); }
 details.imp-paste { margin-top: 10px; }
 details.imp-paste summary { cursor: pointer; font-size: 14px; color: var(--muted); }
 details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; font: inherit; border-radius: 12px; border: 1px solid var(--line); background: var(--glass-in, var(--surface)); color: var(--ink); padding: 10px; }
+
+/* sheet import */
+.xl-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+.xl-map .fld { margin: 0; font-size: 13px; }
+.xl-tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+.xl-tbl th, .xl-tbl td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.xl-tbl th { color: var(--muted); font-weight: 500; }
+.xl-scroll { overflow-x: auto; margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -624,13 +632,15 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
       <section class="card card-pad" aria-labelledby="h-imp">
         <div class="card-head">
           <h2 id="h-imp">정비 이력 가져오기</h2>
-          <div class="listtools"><button class="btn small" id="impPick" type="button">사진 선택</button></div>
+          <div class="listtools"><button class="btn small" id="xlPick" type="button">엑셀·CSV</button><button class="btn small" id="impPick" type="button">사진 선택</button></div>
         </div>
         <div class="imp-drop" id="impDrop">
-          <p class="hint" style="margin:0">자동차 기록 증명서(마일클 등) 화면을 캡처해 올리면 날짜·주행거리·교체 항목을 읽어서 기록으로 가져와요. 사진은 이 기기 안에서만 처리돼요. 이미지를 끌어다 놓거나 붙여넣어도 돼요.</p>
+          <p class="hint" style="margin:0">자동차 기록 증명서(마일클 등) 화면을 캡처해 올리면 날짜·주행거리·교체 항목을 읽어서 기록으로 가져와요. 사진은 이 기기 안에서만 처리돼요. 이미지를 끌어다 놓거나 붙여넣어도 돼요. 엑셀로 관리하던 기록은 오른쪽 위 <b>엑셀·CSV</b> 버튼으로 가져와요. 이 앱에서 내보낸 CSV는 그대로 읽혀요.</p>
           <input id="impFile" type="file" accept="image/*" hidden>
           <div id="impBox" hidden></div>
         </div>
+        <input id="xlFile" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,text/csv" hidden>
+        <div id="xlBox" hidden></div>
         <details class="imp-paste">
           <summary>사진이 안 읽히면 글자를 직접 붙여넣기</summary>
           <textarea id="impText" placeholder="2026.09&#10;125,256km&#10;엔진오일 및 오일필터 · 냉각수 …" aria-label="증명서 글자 붙여넣기"></textarea>
@@ -1947,7 +1957,254 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
       var fs = ev.clipboardData && ev.clipboardData.files;
       if (fs && fs[0] && /^image\//.test(fs[0].type)) { ev.preventDefault(); importFile(fs[0]); }
     });
+    $('xlPick').addEventListener('click', function () { $('xlFile').click(); });
+    $('xlFile').addEventListener('change', function () { var f = $('xlFile').files[0]; $('xlFile').value = ''; importSheet(f); });
     $('impParse').addEventListener('click', function () { showImp(parseCert($('impText').value), $('impText').value); });
+  }
+
+
+  /* ---------- import from a spreadsheet (xlsx / csv) ---------- */
+  var XL = window.__XLSX || { script: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js' };
+  var XL_FIELDS = [
+    ['date', '날짜', /날짜|일자|일시|^date$|^day$/],
+    ['items', '교체 소모품', /소모품|교체항목|교체내역|교체부품|^items?$/],
+    ['full', '가득 여부', /가득|^full/],
+    ['station', '주유소', /주유소|충전소|장소|상호/],
+    ['qty', '수량', /수량|주유량|충전량|리터$|^l$|연료량|^qty/],
+    ['price', '단가', /단가|리터당|^price/],
+    ['odo', '주행거리', /주행|누적|오도|^odo|^km$|거리/],
+    ['amount', '금액', /금액|비용|지출|합계|총액|결제|^amount|^cost/],
+    ['cat', '분류', /분류|구분|종류|^category$|^type$/],
+    ['memo', '메모', /메모|내용|비고|적요|^memo|^note/]
+  ];
+  var xl = null;
+  function normH(v) { return String(v == null ? '' : v).toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, '').replace(/[\s_\-\/·.]/g, ''); }
+  function mapHeaders(hdr) {
+    var map = {}, used = {};
+    XL_FIELDS.forEach(function (f) {
+      for (var c = 0; c < hdr.length; c++) {
+        if (used[c]) continue;
+        if (f[2].test(normH(hdr[c]))) { map[f[0]] = c; used[c] = true; return; }
+      }
+      map[f[0]] = -1;
+    });
+    return map;
+  }
+  function findHeader(rows) {
+    var best = -1, bestN = 0;
+    for (var i = 0; i < Math.min(rows.length, 12); i++) {
+      var m = mapHeaders(rows[i]), n = 0;
+      Object.keys(m).forEach(function (k) { if (m[k] >= 0) n++; });
+      if (m.date >= 0 && n >= 2 && n > bestN) { best = i; bestN = n; if (n >= 4) break; }
+    }
+    return best;
+  }
+  function parseCsv(text) {
+    text = text.replace(/^﻿/, '');
+    var first = text.split(/\r?\n/)[0] || '';
+    var delim = ',', best = 0;
+    [',', '\t', ';'].forEach(function (d) { var n = first.split(d).length; if (n > best) { best = n; delim = d; } });
+    var rows = [], row = [], cell = '', q = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); cell = '';
+        if (row.some(function (x) { return x !== ''; })) rows.push(row);
+        row = [];
+      } else cell += ch;
+    }
+    row.push(cell);
+    if (row.some(function (x) { return x !== ''; })) rows.push(row);
+    return rows;
+  }
+  function decodeText(buf) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch (e) { try { return new TextDecoder('euc-kr').decode(buf); } catch (e2) { return new TextDecoder('utf-8').decode(buf); } }
+  }
+  function loadXlsx() {
+    return new Promise(function (res, rej) {
+      if (window.XLSX) return res(window.XLSX);
+      var sc = document.createElement('script');
+      sc.src = XL.script;
+      sc.onload = function () { window.XLSX ? res(window.XLSX) : rej(new Error('xlsx')); };
+      sc.onerror = function () { rej(new Error('xlsx')); };
+      document.head.appendChild(sc);
+    });
+  }
+  function readTable(file) {
+    var ext = (file.name.split('.').pop() || '').toLowerCase();
+    return file.arrayBuffer().then(function (buf) {
+      if (ext === 'csv' || ext === 'tsv' || ext === 'txt') return parseCsv(decodeText(buf));
+      return loadXlsx().then(function (X) {
+        var wb = X.read(buf, { type: 'array' }), rows = [];
+        for (var i = 0; i < wb.SheetNames.length; i++) {
+          rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[i]], { header: 1, raw: true, defval: '' });
+          if (rows.length > 1 && findHeader(rows) >= 0) return rows;
+        }
+        return rows;
+      });
+    });
+  }
+  function cellDate(v) {
+    if (v == null || v === '') return null;
+    var y, m, d;
+    if (typeof v === 'number') {
+      if (v < 20000 || v > 80000) return null;
+      var dt = new Date(Math.round((Math.floor(v) - 25569) * 86400000));
+      y = dt.getUTCFullYear(); m = dt.getUTCMonth() + 1; d = dt.getUTCDate();
+    } else {
+      var mm = String(v).match(/(\d{2,4})\s*[.\-\/년]\s*(\d{1,2})\s*[.\-\/월]\s*(\d{1,2})/);
+      if (!mm) return null;
+      y = +mm[1]; m = +mm[2]; d = +mm[3];
+      if (y < 100) y += 2000;
+    }
+    if (y < 1990 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return y + '-' + pad(m) + '-' + pad(d);
+  }
+  function cellNum(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    var t = String(v == null ? '' : v).replace(/[,\s원₩kmKM㎞LlＬ리터]/g, '');
+    if (t === '' || !/^-?\d+(\.\d+)?$/.test(t)) return null;
+    return parseFloat(t);
+  }
+  function catFromText(t) {
+    t = String(t || '');
+    var exact = CATS.find(function (c) { return c.name === t.trim() || c.id === t.trim(); });
+    if (exact) return exact.id;
+    if (/주유|충전|연료|기름|휘발유|경유|LPG|전기/i.test(t)) return 'fuel';
+    if (/세차/.test(t)) return 'wash';
+    if (/보험/.test(t)) return 'ins';
+    if (/세금|검사|자동차세|과태료/.test(t)) return 'tax';
+    if (/주차|통행|톨|하이패스/.test(t)) return 'park';
+    if (/정비|수리|교환|교체|오일|타이어|부품|점검|엔진|브레이크|배터리|와이퍼/.test(t)) return 'maint';
+    return 'etc';
+  }
+  function itemNamesFromText(t) {
+    var out = detectItems(t), n = String(t).replace(/\s+/g, '');
+    S.items.forEach(function (it) { if (n.indexOf(it.name.replace(/\s+/g, '')) >= 0 && out.indexOf(it.name) < 0) out.push(it.name); });
+    return out;
+  }
+  function buildRecs(xlst) {
+    var rows = xlst.rows, map = xlst.map, recs = [], bad = 0, seen = {};
+    var known = {};
+    S.entries.forEach(function (e) { known[[e.date, e.cat, e.amount, e.odo == null ? '' : e.odo].join('|')] = true; });
+    var get = function (r, f) { return map[f] >= 0 ? r[map[f]] : ''; };
+    for (var i = xlst.headerIdx + 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r.some(function (x) { return x !== '' && x != null; })) continue;
+      var date = cellDate(get(r, 'date'));
+      var amount = cellNum(get(r, 'amount')), odo = cellNum(get(r, 'odo')), qty = cellNum(get(r, 'qty')), price = cellNum(get(r, 'price'));
+      if (!date || (amount == null && odo == null && qty == null)) { bad++; continue; }
+      var memo = String(get(r, 'memo') == null ? '' : get(r, 'memo')).trim();
+      var itemText = String(get(r, 'items') == null ? '' : get(r, 'items'));
+      var cat = map.cat >= 0 ? catFromText(get(r, 'cat')) : ((qty || price) ? 'fuel' : (itemText || /교체|교환|수리|정비/.test(memo) ? 'maint' : 'etc'));
+      if (amount == null && qty && price) amount = Math.round(qty * price);
+      if (price == null && qty && amount) price = Math.round(amount / qty * 10) / 10;
+      var fv = String(get(r, 'full') == null ? '' : get(r, 'full')).trim();
+      var rec = {
+        date: date, cat: cat, amount: Math.max(0, Math.round(amount || 0)),
+        odo: odo != null && odo > 0 ? Math.round(odo) : null,
+        qty: cat === 'fuel' && qty > 0 ? qty : null, price: cat === 'fuel' && price > 0 ? price : null,
+        full: cat === 'fuel' ? (fv === '' ? true : !/^(0|n|no|false|아니오|아니요|x|✗)$/i.test(fv)) : false,
+        station: cat === 'fuel' ? String(get(r, 'station') == null ? '' : get(r, 'station')).trim().slice(0, 30) : '',
+        memo: memo.slice(0, 120),
+        itemNames: cat === 'maint' ? itemNamesFromText(itemText || memo) : []
+      };
+      var key = [rec.date, rec.cat, rec.amount, rec.odo == null ? '' : rec.odo].join('|');
+      rec.dup = !!known[key] || !!seen[key];
+      seen[key] = true;
+      recs.push(rec);
+    }
+    return { recs: recs, bad: bad };
+  }
+  function showXl() {
+    var box = $('xlBox'), res = buildRecs(xl), recs = res.recs;
+    var fresh = recs.filter(function (r) { return !r.dup; });
+    box.hidden = false;
+    box.textContent = '';
+    box.append(h('p', { class: 'imp-sum', text: (xl.rows.length - xl.headerIdx - 1) + '행 중 ' + fresh.length + '건을 가져올 수 있어요' +
+      (recs.length - fresh.length ? ' · 중복 ' + (recs.length - fresh.length) + '건 제외' : '') + (res.bad ? ' · 읽지 못한 행 ' + res.bad + '건' : '') + '.' }));
+    var grid = h('div', { class: 'xl-map' });
+    var hdr = xl.rows[xl.headerIdx];
+    XL_FIELDS.forEach(function (f) {
+      var sel = h('select', { 'aria-label': f[1] + ' 열' });
+      sel.append(h('option', { value: '-1', text: '사용 안 함' }));
+      hdr.forEach(function (x, c) { sel.append(h('option', { value: String(c), text: String(x === '' ? '(열 ' + (c + 1) + ')' : x) })); });
+      sel.value = String(xl.map[f[0]]);
+      sel.addEventListener('change', function () { xl.map[f[0]] = parseInt(sel.value, 10); showXl(); });
+      grid.append(h('label', { class: 'fld' }, h('span', { text: f[1] + (f[0] === 'date' ? ' *' : '') }), sel));
+    });
+    box.append(grid);
+    if (!fresh.length) {
+      box.append(h('p', { class: 'imp-state', text: xl.map.date < 0 ? '날짜 열을 찾지 못했어요. 위에서 날짜 열을 골라 주세요.' : '가져올 새 기록이 없어요. 열 선택이 맞는지 확인해 주세요.' }));
+    } else {
+      var tb = h('table', { class: 'xl-tbl' }, h('thead', null, h('tr', null, h('th', { text: '날짜' }), h('th', { text: '분류' }), h('th', { text: '주행거리' }), h('th', { text: '금액' }), h('th', { text: '내용' }))));
+      var body = h('tbody');
+      fresh.slice(0, 6).forEach(function (r) {
+        body.append(h('tr', null, h('td', { text: r.date }), h('td', { text: catOf(r.cat).name }), h('td', { text: r.odo == null ? '' : nf.format(r.odo) }), h('td', { text: won(r.amount) }),
+          h('td', { text: (r.station || r.memo || r.itemNames.join(', ')) })));
+      });
+      tb.append(body);
+      box.append(h('div', { class: 'xl-scroll' }, tb));
+      if (fresh.length > 6) box.append(h('p', { class: 'hint', text: '미리보기는 6건만 보여요. 나머지 ' + (fresh.length - 6) + '건도 함께 가져와요.' }));
+    }
+    var go = h('button', { class: 'btn primary', type: 'button', text: fresh.length + '건 가져오기' });
+    go.disabled = !fresh.length;
+    go.addEventListener('click', function () { go.disabled = true; commitEntries(fresh, function () { box.hidden = true; box.textContent = ''; xl = null; }); });
+    box.append(h('div', { class: 'actions' }, go, h('button', { class: 'btn', type: 'button', text: '닫기', onclick: function () { box.hidden = true; box.textContent = ''; xl = null; } })));
+    box.querySelectorAll('.xl-map select').forEach(function (sel) { enhanceSelect(sel); });
+  }
+  function commitEntries(recs, done) {
+    var list = S.items.slice(), created = 0, norm = function (x) { return String(x).replace(/\s+/g, ''); };
+    function idFor(name) {
+      var f = list.find(function (it) { return norm(it.name) === norm(name); });
+      if (!f) {
+        var p = PRESETS.find(function (x) { return norm(x.name) === norm(name); }) || { name: name, km: null, months: null };
+        f = { id: 'i_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: p.name, km: p.km || null, months: p.months || null };
+        list.push(f); created++;
+      }
+      return f.id;
+    }
+    var base = Date.now();
+    var ents = recs.map(function (r, i) {
+      return {
+        id: 'e_' + (base + i).toString(36) + Math.random().toString(36).slice(2, 6),
+        date: r.date, cat: r.cat, amount: r.amount, odo: r.odo, qty: r.qty, price: r.price, full: r.full,
+        station: r.station, items: r.itemNames.map(idFor), memo: r.memo, ts: base + i
+      };
+    });
+    var p = enqueue(function () { return created ? putItems(list) : Promise.resolve(); });
+    ents.forEach(function (e) { p = p.then(function () { return enqueue(function () { return putEntry(e); }); }); });
+    p.then(function () {
+      toast(ents.length + '건을 가져왔어요' + (created ? ' · 소모품 ' + created + '개 추가' : ''));
+      S.listMonth = 'all';
+      render();
+      if (done) done();
+    });
+  }
+  function importSheet(file) {
+    if (!file) return;
+    var box = $('xlBox');
+    box.hidden = false; box.textContent = '';
+    box.append(h('p', { class: 'imp-state', text: '파일을 읽는 중이에요…' }));
+    readTable(file).then(function (rows) {
+      var hi = findHeader(rows);
+      if (hi < 0) {
+        box.textContent = '';
+        box.append(h('p', { class: 'imp-state', text: '머리글 행을 찾지 못했어요. 첫 줄에 "날짜", "금액", "주행거리" 같은 열 이름이 있어야 해요. 이 앱의 CSV 내보내기 파일을 예시로 참고해 주세요.' }));
+        return;
+      }
+      xl = { rows: rows, headerIdx: hi, map: mapHeaders(rows[hi]) };
+      showXl();
+    }, function () {
+      box.textContent = '';
+      box.append(h('p', { class: 'imp-state', text: '파일을 읽지 못했어요. 엑셀 파일은 읽기 도구를 내려받아야 해서 인터넷 연결이 필요해요. 엑셀에서 "CSV로 저장"한 파일은 연결 없이도 읽어요.' }));
+    });
   }
 
   /* ---------- toast ---------- */
