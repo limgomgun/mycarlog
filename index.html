@@ -528,12 +528,19 @@ details.imp-paste summary { cursor: pointer; font-size: 14px; color: var(--muted
 details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; font: inherit; border-radius: 12px; border: 1px solid var(--line); background: var(--glass-in, var(--surface)); color: var(--ink); padding: 10px; }
 
 /* sheet import */
-.xl-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+.xl-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; margin: 10px 0; }
 .xl-map .fld { margin: 0; font-size: 13px; }
 .xl-tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
 .xl-tbl th, .xl-tbl td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .xl-tbl th { color: var(--muted); font-weight: 500; }
 .xl-scroll { overflow-x: auto; margin-bottom: 12px; }
+.xl-scroll.tall { max-height: 380px; overflow-y: auto; }
+.xl-tbl { min-width: 520px; }
+.xl-tbl td:nth-child(2), .xl-tbl td:nth-child(4) { white-space: nowrap; }
+.xl-tbl tr.dup td { opacity: .55; }
+.xl-tbl select { height: 30px; padding: 0 6px; border-radius: 10px; border: 1px solid var(--line); background: var(--glass-in, var(--surface)); color: var(--ink); font-size: 13px; }
+.xl-tbl input[type=text] { width: 100%; min-width: 140px; height: 30px; border-radius: 10px; border: 1px solid var(--line); background: var(--glass-in, var(--surface)); color: var(--ink); font-size: 13px; padding: 0 8px; }
+.xl-tbl input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -1963,7 +1970,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     if (!file || !/^image\//.test(file.type)) { toast('이미지 파일을 선택해 주세요'); return; }
     impMsg('글자를 읽는 중이에요… 처음에는 읽기 도구를 내려받느라 조금 걸려요.', true);
     ocrImage(file, impProg).then(function (text) {
-      showImp(parseCert(text), text);
+      routeText(text);
     }, function () {
       impMsg('사진을 읽지 못했어요. 인터넷 연결을 확인하거나, 아래에 글자를 직접 붙여넣어 보세요.', false);
     });
@@ -1984,7 +1991,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     $('xlTpl').addEventListener('click', downloadTemplate);
     $('xlPick').addEventListener('click', function () { $('xlFile').click(); });
     $('xlFile').addEventListener('change', function () { var f = $('xlFile').files[0]; $('xlFile').value = ''; importSheet(f); });
-    $('impParse').addEventListener('click', function () { showImp(parseCert($('impText').value), $('impText').value); });
+    $('impParse').addEventListener('click', function () { routeText($('impText').value); });
   }
 
 
@@ -1998,9 +2005,9 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     ['qty', '수량', /수량|주유량|충전량|리터$|^l$|연료량|^qty/],
     ['price', '단가', /단가|리터당|^price/],
     ['odo', '주행거리', /주행|누적|오도|^odo|^km$|거리/],
-    ['amount', '금액', /금액|비용|지출|합계|총액|결제|^amount|^cost/],
+    ['amount', '금액', /출금|찾으신|지급액|금액|비용|지출|합계|총액|결제|^amount|^cost/, /입금|잔액|잔고|수수료/],
     ['cat', '분류', /분류|구분|종류|^category$|^type$/],
-    ['memo', '메모', /메모|내용|비고|적요|^memo|^note/]
+    ['memo', '메모', /메모|내용|비고|적요|기재|거래처|받는|보낸|상대|^memo|^note/]
   ];
   var xl = null;
   function normH(v) { return String(v == null ? '' : v).toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, '').replace(/[\s_\-\/·.]/g, ''); }
@@ -2009,10 +2016,11 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     XL_FIELDS.forEach(function (f) {
       for (var c = 0; c < hdr.length; c++) {
         if (used[c]) continue;
-        if (f[2].test(normH(hdr[c]))) { map[f[0]] = c; used[c] = true; return; }
+        if (f[2].test(normH(hdr[c])) && !(f[3] && f[3].test(normH(hdr[c])))) { map[f[0]] = c; used[c] = true; return; }
       }
       map[f[0]] = -1;
     });
+    map.bank = hdr.some(function (x) { return /출금|입금/.test(normH(x)); });
     return map;
   }
   function findHeader(rows) {
@@ -2114,48 +2122,103 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     S.items.forEach(function (it) { if (n.indexOf(it.name.replace(/\s+/g, '')) >= 0 && out.indexOf(it.name) < 0) out.push(it.name); });
     return out;
   }
-  function buildRecs(xlst) {
-    var rows = xlst.rows, map = xlst.map, recs = [], bad = 0, seen = {};
-    var known = {};
+  var CAT_KW = [
+    ['tax',  /자동차세|위택스|이택스|교통안전공단|자동차검사|검사소|과태료|범칙금|등록세|취득세/],
+    ['ins',  /삼성화재|현대해상|DB손해|DB손보|KB손해|메리츠화재|한화손해|롯데손해|하나손해|흥국화재|캐롯|자동차보험|보험료|다이렉트/i],
+    ['park', /주차|파킹|하이패스|도로공사|톨게이트|통행료|아이파킹|나이스파크/],
+    ['wash', /세차|워시|카워시/],
+    ['fuel', /주유소|GS칼텍스|칼텍스|SK에너지|SK주유|S-?OIL|에스오일|오일뱅크|알뜰주유|NH주유|셀프주유|충전소|차지비|에버온|테슬라|EV충전|전기차충전|환경부충전|대영채비|파워큐브|일렉링크|LPG/i],
+    ['maint', /정비|카센터|모터스|오토큐|블루핸즈|스피드메이트|타이어|공업사|서비스센터|오토랜드|카닥|엔진오일|오일교환|자동차부품|부품|공임|튜닝|광택|코팅|썬팅/]
+  ];
+  function classify(text) {
+    var t = String(text || '');
+    for (var i = 0; i < CAT_KW.length; i++) if (CAT_KW[i][1].test(t)) return { cat: CAT_KW[i][0], car: true };
+    return { cat: 'etc', car: false };
+  }
+  function markDup(recs) {
+    var known = {}, seen = {};
     S.entries.forEach(function (e) { known[[e.date, e.cat, e.amount, e.odo == null ? '' : e.odo].join('|')] = true; });
+    recs.forEach(function (r) {
+      var key = [r.date, r.cat, r.amount, r.odo == null ? '' : r.odo].join('|');
+      r.dup = !!known[key] || !!seen[key];
+      seen[key] = true;
+      r.on = !r.dup && r.car !== false;
+    });
+  }
+  function buildRecs(xlst) {
+    var rows = xlst.rows, map = xlst.map, recs = [], bad = 0, bank = !!map.bank;
     var get = function (r, f) { return map[f] >= 0 ? r[map[f]] : ''; };
+    var memoCols = [];
+    var hdr = rows[xlst.headerIdx];
+    hdr.forEach(function (x, c) { if (/메모|내용|비고|적요|기재|거래처|받는|보낸|상대|^memo|^note/.test(normH(x)) && !/잔액|입금액|출금액/.test(normH(x))) memoCols.push(c); });
+    if (map.memo >= 0 && memoCols.indexOf(map.memo) < 0) memoCols.unshift(map.memo);
     for (var i = xlst.headerIdx + 1; i < rows.length; i++) {
       var r = rows[i];
       if (!r.some(function (x) { return x !== '' && x != null; })) continue;
       var date = cellDate(get(r, 'date'));
       var amount = cellNum(get(r, 'amount')), odo = cellNum(get(r, 'odo')), qty = cellNum(get(r, 'qty')), price = cellNum(get(r, 'price'));
       if (!date || (amount == null && odo == null && qty == null)) { bad++; continue; }
-      var memo = String(get(r, 'memo') == null ? '' : get(r, 'memo')).trim();
+      if (bank && !(amount > 0)) continue;
+      var memo = memoCols.map(function (c) { return String(r[c] == null ? '' : r[c]).trim(); }).filter(Boolean).join(' ');
       var itemText = String(get(r, 'items') == null ? '' : get(r, 'items'));
-      var cat = map.cat >= 0 ? catFromText(get(r, 'cat')) : ((qty || price) ? 'fuel' : (itemText || /교체|교환|수리|정비/.test(memo) ? 'maint' : 'etc'));
+      var car = true, cat;
+      if (map.cat >= 0) cat = catFromText(get(r, 'cat'));
+      else if (bank) { var cl = classify(memo); cat = cl.cat; car = cl.car; }
+      else cat = (qty || price) ? 'fuel' : (itemText || /교체|교환|수리|정비/.test(memo) ? 'maint' : 'etc');
       if (amount == null && qty && price) amount = Math.round(qty * price);
       if (price == null && qty && amount) price = Math.round(amount / qty * 10) / 10;
       var fv = String(get(r, 'full') == null ? '' : get(r, 'full')).trim();
-      var rec = {
+      recs.push({
         date: date, cat: cat, amount: Math.max(0, Math.round(amount || 0)),
         odo: odo != null && odo > 0 ? Math.round(odo) : null,
-        qty: cat === 'fuel' && qty > 0 ? qty : null, price: cat === 'fuel' && price > 0 ? price : null,
-        full: cat === 'fuel' ? (fv === '' ? true : !/^(0|n|no|false|아니오|아니요|x|✗)$/i.test(fv)) : false,
-        station: cat === 'fuel' ? String(get(r, 'station') == null ? '' : get(r, 'station')).trim().slice(0, 30) : '',
-        memo: memo.slice(0, 120),
-        itemNames: cat === 'maint' ? itemNamesFromText(itemText || memo) : []
-      };
-      var key = [rec.date, rec.cat, rec.amount, rec.odo == null ? '' : rec.odo].join('|');
-      rec.dup = !!known[key] || !!seen[key];
-      seen[key] = true;
-      recs.push(rec);
+        qty: qty > 0 ? qty : null, price: price > 0 ? price : null,
+        full: fv === '' ? true : !/^(0|n|no|false|아니오|아니요|x|✗)$/i.test(fv),
+        station: String(get(r, 'station') || (bank ? memo : '')).trim().slice(0, 30),
+        memo: memo.slice(0, 120), itemNames: itemNamesFromText(itemText || memo), car: car
+      });
     }
+    markDup(recs);
     return { recs: recs, bad: bad };
+  }
+  function appendRecList(box, recs, extra, closeFn) {
+    var fresh = recs.filter(function (r) { return !r.dup; });
+    var picked = function () { return recs.filter(function (r) { return r.on; }); };
+    box.append(h('p', { class: 'imp-sum', text: recs.length + '건을 찾았어요' + (recs.length - fresh.length ? ' · 이미 있는 기록 ' + (recs.length - fresh.length) + '건' : '') + (extra || '') + '. 가져올 항목을 확인해 주세요.' }));
+    var go = h('button', { class: 'btn primary', type: 'button' });
+    var upd = function () { var n = picked().length; go.textContent = n + '건 가져오기'; go.disabled = n === 0; };
+    if (!recs.length) { box.append(h('p', { class: 'imp-state', text: '가져올 기록을 찾지 못했어요.' })); }
+    else {
+      var all = h('input', { type: 'checkbox', 'aria-label': '전체 선택', checked: recs.every(function (r) { return r.on; }) ? true : null });
+      var tb = h('table', { class: 'xl-tbl' }, h('thead', null, h('tr', null, h('th', null, all), h('th', { text: '날짜' }), h('th', { text: '분류' }), h('th', { text: '금액' }), h('th', { text: '내용' }))));
+      var body = h('tbody'), cbs = [];
+      recs.forEach(function (r) {
+        var cb = h('input', { type: 'checkbox', 'aria-label': '가져오기', checked: r.on ? true : null, onchange: function () { r.on = cb.checked; upd(); } });
+        cbs.push([cb, r]);
+        var sel = h('select', { 'aria-label': '분류', onchange: function () { r.cat = sel.value; markDupOne(); } });
+        CATS.forEach(function (c) { sel.append(h('option', { value: c.id, text: c.name })); });
+        sel.value = r.cat;
+        function markDupOne() { /* category edits keep selection as is */ }
+        var memoI = h('input', { type: 'text', maxlength: '120', value: r.memo || r.itemNames.join(', '), 'aria-label': '내용', onchange: function () { r.memo = memoI.value.trim(); if (r.cat === 'fuel') r.station = r.memo.slice(0, 30); } });
+        var note = (r.odo ? nf.format(r.odo) + 'km' : '') + (r.dup ? (r.odo ? ' · ' : '') + '이미 있음' : '');
+        body.append(h('tr', { class: r.dup ? 'dup' : null }, h('td', null, cb), h('td', { text: r.date }), h('td', null, sel), h('td', { text: won(r.amount) }), h('td', null, memoI, note ? h('div', { class: 'hint', text: note }) : null)));
+      });
+      all.addEventListener('change', function () { cbs.forEach(function (p) { p[0].checked = all.checked; p[1].on = all.checked; }); upd(); });
+      tb.append(body);
+      box.append(h('div', { class: 'xl-scroll tall' }, tb));
+    }
+    go.addEventListener('click', function () { go.disabled = true; commitEntries(picked(), closeFn); });
+    box.append(h('div', { class: 'actions' }, go, h('button', { class: 'btn', type: 'button', text: '닫기', onclick: closeFn })));
+    upd();
   }
   function showXl() {
     var box = $('xlBox'), res = buildRecs(xl), recs = res.recs;
-    var fresh = recs.filter(function (r) { return !r.dup; });
+    $('impBox').hidden = true;
     box.hidden = false;
     box.textContent = '';
-    box.append(h('p', { class: 'imp-sum', text: (xl.rows.length - xl.headerIdx - 1) + '행 중 ' + fresh.length + '건을 가져올 수 있어요' +
-      (recs.length - fresh.length ? ' · 중복 ' + (recs.length - fresh.length) + '건 제외' : '') + (res.bad ? ' · 읽지 못한 행 ' + res.bad + '건' : '') + '.' }));
-    var grid = h('div', { class: 'xl-map' });
+    var close = function () { box.hidden = true; box.textContent = ''; xl = null; };
     var hdr = xl.rows[xl.headerIdx];
+    if (xl.map.bank) box.append(h('p', { class: 'imp-state', text: '입출금 내역으로 보여요. 출금 내역만 읽고, 차량 관련으로 보이는 기록만 미리 선택했어요.' }));
+    var grid = h('div', { class: 'xl-map' });
     XL_FIELDS.forEach(function (f) {
       var sel = h('select', { 'aria-label': f[1] + ' 열' });
       sel.append(h('option', { value: '-1', text: '사용 안 함' }));
@@ -2165,24 +2228,98 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
       grid.append(h('label', { class: 'fld' }, h('span', { text: f[1] + (f[0] === 'date' ? ' *' : '') }), sel));
     });
     box.append(grid);
-    if (!fresh.length) {
-      box.append(h('p', { class: 'imp-state', text: xl.map.date < 0 ? '날짜 열을 찾지 못했어요. 위에서 날짜 열을 골라 주세요.' : '가져올 새 기록이 없어요. 열 선택이 맞는지 확인해 주세요.' }));
-    } else {
-      var tb = h('table', { class: 'xl-tbl' }, h('thead', null, h('tr', null, h('th', { text: '날짜' }), h('th', { text: '분류' }), h('th', { text: '주행거리' }), h('th', { text: '금액' }), h('th', { text: '내용' }))));
-      var body = h('tbody');
-      fresh.slice(0, 6).forEach(function (r) {
-        body.append(h('tr', null, h('td', { text: r.date }), h('td', { text: catOf(r.cat).name }), h('td', { text: r.odo == null ? '' : nf.format(r.odo) }), h('td', { text: won(r.amount) }),
-          h('td', { text: (r.station || r.memo || r.itemNames.join(', ')) })));
-      });
-      tb.append(body);
-      box.append(h('div', { class: 'xl-scroll' }, tb));
-      if (fresh.length > 6) box.append(h('p', { class: 'hint', text: '미리보기는 6건만 보여요. 나머지 ' + (fresh.length - 6) + '건도 함께 가져와요.' }));
-    }
-    var go = h('button', { class: 'btn primary', type: 'button', text: fresh.length + '건 가져오기' });
-    go.disabled = !fresh.length;
-    go.addEventListener('click', function () { go.disabled = true; commitEntries(fresh, function () { box.hidden = true; box.textContent = ''; xl = null; }); });
-    box.append(h('div', { class: 'actions' }, go, h('button', { class: 'btn', type: 'button', text: '닫기', onclick: function () { box.hidden = true; box.textContent = ''; xl = null; } })));
     box.querySelectorAll('.xl-map select').forEach(function (sel) { enhanceSelect(sel); });
+    if (xl.map.date < 0) box.append(h('p', { class: 'imp-state', text: '날짜 열을 찾지 못했어요. 위에서 날짜 열을 골라 주세요.' }));
+    appendRecList(box, recs, res.bad ? ' · 읽지 못한 행 ' + res.bad + '건' : '', close);
+  }
+
+  /* ---------- text (screenshot / paste): bank transfers & repair invoices ---------- */
+  function textDate(line) {
+    var today = new Date(), y, mo, d, m = line.match(/(20\d\d|\d{2})\s*[.\-\/년]\s*(\d{1,2})\s*[.\-\/월]\s*(\d{1,2})\s*일?/), len = 0, idx = -1;
+    if (m) { y = +m[1] < 100 ? 2000 + (+m[1]) : +m[1]; mo = +m[2]; d = +m[3]; idx = m.index; len = m[0].length; }
+    else {
+      m = line.match(/^\s*(\d{1,2})\s*[.\/월]\s*(\d{1,2})\s*일?(?=\s|$)/);
+      if (!m) return null;
+      mo = +m[1]; d = +m[2]; y = today.getFullYear(); idx = m.index; len = m[0].length;
+    }
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    var dt = new Date(y, mo - 1, d);
+    if (!m[3] && dt > new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)) y--;
+    return { date: y + '-' + pad(mo) + '-' + pad(d), rest: (line.slice(0, idx) + ' ' + line.slice(idx + len)).replace(/\d{1,2}:\d{2}(:\d{2})?/g, ' ').trim() };
+  }
+  function textAmount(str) {
+    str = str.replace(/잔액[^\d\-]*-?[\d,]+\s*원?/g, ' ');
+    var m = str.match(/([+\-−–]?)\s*(\d{1,3}(?:,\d{3})+)\s*원?/) || str.match(/([+\-−–]?)\s*(\d{3,8})\s*원/);
+    if (!m) return null;
+    var v = parseInt(m[2].replace(/,/g, ''), 10);
+    if (!(v > 0) || v > 50000000) return null;
+    return { v: v, plus: m[1] === '+', text: m[0] };
+  }
+  function parseInvoice(text) {
+    if (!/(정비|수리|견적|명세|청구|공임|부품)/.test(text) || !/(합계|총\s*액|총\s*금액|청구|결제|합\s*계)/.test(text)) return null;
+    var lines = text.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean), dates = {}, first = null;
+    lines.forEach(function (l) { var d = textDate(l); if (d) { dates[d.date] = 1; if (!first) first = d.date; } });
+    if (Object.keys(dates).length > 2) return null;
+    var tot = null;
+    lines.forEach(function (l) {
+      if (/(합계|총\s*액|총\s*금액|청구\s*금액|결제\s*금액|합\s*계)/.test(l)) {
+        var a = textAmount(l.replace(/^[^\d]*?(합계|총\s*액|총\s*금액|청구\s*금액|결제\s*금액|합\s*계)/, '')) || textAmount(l);
+        if (a && (!tot || a.v >= tot)) tot = a.v;
+      }
+    });
+    if (tot == null) return null;
+    var km = text.match(/(\d{1,3}(?:,\d{3})+|\d{4,7})\s*(?:km|㎞|키로)/i);
+    var shopL = lines.filter(function (l) { return /정비|모터스|카센터|오토|서비스|공업사|타이어/.test(l) && !textAmount(l); })[0] || '';
+    var names = [];
+    lines.forEach(function (l) {
+      if (/(합계|총\s*액|총\s*금액|청구|결제|부가세|공급가|주행|km|㎞|차량번호|입고|출고|전화|연락)/i.test(l)) return;
+      var a = textAmount(l); if (!a) return;
+      var n = l.replace(a.text, '').replace(/[\d\s,.:*x×]+$/i, '').replace(/^[\d\s.\-]+/, '').trim();
+      if (n.length >= 2 && n.length <= 24) names.push(n);
+    });
+    var memo = '[정비서] ' + (shopL ? shopL.slice(0, 20) + ': ' : '') + (names.join(', ') || '정비 명세');
+    return [{ date: first || todayStr(), cat: 'maint', amount: tot, odo: km ? parseInt(km[1].replace(/,/g, ''), 10) : null, qty: null, price: null, full: false, station: '',
+      memo: memo.slice(0, 120), itemNames: detectItems(text), car: true }];
+  }
+  function parseTextLedger(text) {
+    var inv = parseInvoice(text);
+    if (inv) { markDup(inv); return inv; }
+    var lines = text.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean), txs = [], cur = null, open = null;
+    lines.forEach(function (raw) {
+      var dm = textDate(raw), rest = raw;
+      if (dm) {
+        cur = dm.date; rest = dm.rest; open = null;
+        if (rest.replace(/[\s\d:()요일월화수목금토]/g, '') === '') return;
+      }
+      if (!cur) return;
+      if (!open || open.amt) { open = { date: cur, lines: [], amt: null, dep: false }; txs.push(open); }
+      var a = textAmount(rest), t = rest;
+      if (a) { t = rest.replace(a.text, ' '); open.amt = a; if (a.plus || (/입금/.test(rest) && !/출금/.test(rest))) open.dep = true; }
+      t = t.replace(/잔액[^\d\-]*-?[\d,]+\s*원?/g, ' ').replace(/\s+/g, ' ').trim();
+      if (t) open.lines.push(t);
+    });
+    var recs = txs.filter(function (x) { return x.amt && !x.dep; }).map(function (x) {
+      var memo = x.lines.join(' ').replace(/(출금|이체|체크카드|카드승인|승인|결제)\s*$/g, '').trim(), cl = classify(memo);
+      return { date: x.date, cat: cl.cat, amount: x.amt.v, odo: null, qty: null, price: null, full: true,
+        station: cl.cat === 'fuel' ? memo.slice(0, 30) : '', memo: memo.slice(0, 120), itemNames: cl.cat === 'maint' ? detectItems(memo) : [], car: cl.car };
+    });
+    markDup(recs);
+    return recs;
+  }
+  function routeText(text) {
+    var c = parseCert(text);
+    if (c.length) { $('xlBox').hidden = true; showImp(c, text); return; }
+    var t = parseTextLedger(text);
+    if (t.length) {
+      var box = $('xlBox');
+      $('impBox').hidden = true;
+      box.hidden = false; box.textContent = '';
+      var inv = t.length === 1 && /^\[정비서\]/.test(t[0].memo);
+      box.append(h('p', { class: 'imp-state', text: inv ? '정비 명세서로 보여요. 합계 금액으로 정비 기록 1건을 만들었어요.' : '입출금 내역으로 보여요. 출금 내역만 읽었고, 차량 관련으로 보이는 기록만 미리 선택했어요.' }));
+      appendRecList(box, t, '', function () { box.hidden = true; box.textContent = ''; });
+      return;
+    }
+    showImp([], text);
   }
   function commitEntries(recs, done) {
     var list = S.items.slice(), created = 0, norm = function (x) { return String(x).replace(/\s+/g, ''); };
@@ -2199,8 +2336,9 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     var ents = recs.map(function (r, i) {
       return {
         id: 'e_' + (base + i).toString(36) + Math.random().toString(36).slice(2, 6),
-        date: r.date, cat: r.cat, amount: r.amount, odo: r.odo, qty: r.qty, price: r.price, full: r.full,
-        station: r.station, items: r.itemNames.map(idFor), memo: r.memo, ts: base + i
+        date: r.date, cat: r.cat, amount: r.amount, odo: r.odo,
+        qty: r.cat === 'fuel' ? r.qty : null, price: r.cat === 'fuel' ? r.price : null, full: r.cat === 'fuel' ? r.full !== false : false,
+        station: r.cat === 'fuel' ? (r.station || '') : '', items: r.cat === 'maint' ? r.itemNames.map(idFor) : [], memo: r.memo, ts: base + i
       };
     });
     var p = enqueue(function () { return created ? putItems(list) : Promise.resolve(); });
@@ -2215,6 +2353,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
   function importSheet(file) {
     if (!file) return;
     var box = $('xlBox');
+    $('impBox').hidden = true;
     box.hidden = false; box.textContent = '';
     box.append(h('p', { class: 'imp-state', text: '파일을 읽는 중이에요…' }));
     readTable(file).then(function (rows) {
