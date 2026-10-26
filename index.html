@@ -576,7 +576,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     <label class="fld">차량 이름<input id="c-name" type="text" maxlength="30" placeholder="예: 아반떼, 출퇴근용"></label>
     <label class="fld">연료<select id="c-fuel" aria-label="연료"></select></label>
     <label class="fld">차량 번호 <small>선택</small><input id="c-plate" type="text" maxlength="12" placeholder="예: 12가 3456"></label>
-    <label class="fld"><span>차 가져온 날 <small>선택</small></span><input id="c-since" type="date" aria-label="차 가져온 날"></label>
+    <label class="fld"><span>함께하기 시작한 날 <small>선택</small></span><input id="c-since" type="date" aria-label="함께하기 시작한 날"></label>
     <div class="fld photofld">
       <span>차량 사진 <small>선택</small></span>
       <div class="photorow">
@@ -1125,14 +1125,14 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || '');
     if (!m) return '';
     var d0 = new Date(+m[1], +m[2] - 1, +m[3]), n = new Date(), t = new Date(n.getFullYear(), n.getMonth(), n.getDate());
-    var days = Math.round((t - d0) / 86400000), label = m[1] + '.' + m[2] + '.' + m[3] + ' 가져옴';
-    if (days < 0) return label + ' · D' + days;
-    if (days === 0) return label + ' · 오늘';
+    var days = Math.round((t - d0) / 86400000), since = m[1] + '.' + m[2] + '.' + m[3] + '부터';
+    if (days < 0) return since + ' 함께해요 · D' + days;
+    if (days === 0) return '오늘부터 함께해요';
     var mo = (t.getFullYear() - d0.getFullYear()) * 12 + t.getMonth() - d0.getMonth();
     if (t.getDate() < d0.getDate()) mo--;
     var y = Math.floor(mo / 12), r = mo % 12;
     var span = y ? y + '년' + (r ? ' ' + r + '개월' : '') : (r ? r + '개월' : '');
-    return label + ' · ' + nf.format(days) + '일째' + (span ? ' (' + span + ')' : '');
+    return '함께한 지 ' + nf.format(days) + '일째' + (span ? ' (' + span + ')' : '') + ' · ' + since;
   }
   function renderHeader(list) {
     $('carName').textContent = S.car.name || '내 차';
