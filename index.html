@@ -563,6 +563,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
         <p class="eyebrow">차계부</p>
         <h1 id="carName">내 차</h1>
         <p class="sub" id="carSub"></p>
+        <p class="sub" id="carSince" hidden></p>
       </div>
     </div>
     <div class="odo-wrap">
@@ -575,6 +576,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     <label class="fld">차량 이름<input id="c-name" type="text" maxlength="30" placeholder="예: 아반떼, 출퇴근용"></label>
     <label class="fld">연료<select id="c-fuel" aria-label="연료"></select></label>
     <label class="fld">차량 번호 <small>선택</small><input id="c-plate" type="text" maxlength="12" placeholder="예: 12가 3456"></label>
+    <label class="fld"><span>차 가져온 날 <small>선택</small></span><input id="c-since" type="date" aria-label="차 가져온 날"></label>
     <div class="fld photofld">
       <span>차량 사진 <small>선택</small></span>
       <div class="photorow">
@@ -758,7 +760,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
   ];
   var LS_KEY = 'chagyebu.v1';
   var WD = ['일', '월', '화', '수', '목', '금', '토'];
-  var DEFAULT_CAR = { name: '내 차', fuel: 'gas', plate: '', photo: '' };
+  var DEFAULT_CAR = { name: '내 차', fuel: 'gas', plate: '', since: '', photo: '' };
 
   /* ---------- helpers ---------- */
   var $ = function (id) { return document.getElementById(id); };
@@ -1119,9 +1121,25 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     $('plabel2').textContent = periodLabel();
   }
 
+  function sinceText(str) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || '');
+    if (!m) return '';
+    var d0 = new Date(+m[1], +m[2] - 1, +m[3]), n = new Date(), t = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    var days = Math.round((t - d0) / 86400000), label = m[1] + '.' + m[2] + '.' + m[3] + ' 가져옴';
+    if (days < 0) return label + ' · D' + days;
+    if (days === 0) return label + ' · 오늘';
+    var mo = (t.getFullYear() - d0.getFullYear()) * 12 + t.getMonth() - d0.getMonth();
+    if (t.getDate() < d0.getDate()) mo--;
+    var y = Math.floor(mo / 12), r = mo % 12;
+    var span = y ? y + '년' + (r ? ' ' + r + '개월' : '') : (r ? r + '개월' : '');
+    return label + ' · ' + nf.format(days) + '일째' + (span ? ' (' + span + ')' : '');
+  }
   function renderHeader(list) {
     $('carName').textContent = S.car.name || '내 차';
     $('carSub').textContent = fuelOf().name + (S.car.plate ? ' · ' + S.car.plate : '');
+    var st = sinceText(S.car.since);
+    $('carSince').textContent = st;
+    $('carSince').hidden = !st;
     var img = $('carImg');
     if (S.car.photo) {
       if (img.src !== S.car.photo) img.src = S.car.photo;
@@ -1634,6 +1652,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     $('c-name').value = S.car.name || '';
     $('c-fuel').value = S.car.fuel;
     $('c-plate').value = S.car.plate || '';
+    $('c-since').value = S.car.since || '';
     pendingPhoto = null;
     showPrev(S.car.photo || '');
     syncCat();
@@ -2757,6 +2776,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
         name: $('c-name').value.trim() || DEFAULT_CAR.name,
         fuel: $('c-fuel').value,
         plate: $('c-plate').value.trim(),
+        since: $('c-since').value || '',
         photo: pendingPhoto === null ? (S.car.photo || '') : pendingPhoto
       };
       enqueue(function () { return putCar(car); }).then(function (ok) {
@@ -2788,7 +2808,7 @@ details.imp-paste textarea { width: 100%; min-height: 90px; margin-top: 8px; fon
     $('photoClear').addEventListener('click', function () { pendingPhoto = ''; showPrev(''); });
 
     ['f-cat', 'c-fuel', 'filter', 'monthSel', 'fontSel'].forEach(function (id) { enhanceSelect($(id)); });
-    ['f-date', 'i-date'].forEach(function (id) { enhanceDate($(id)); });
+    ['f-date', 'i-date', 'c-since'].forEach(function (id) { enhanceDate($(id)); });
 
     connect();
   }
